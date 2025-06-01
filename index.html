@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Network Metadata Search</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 Network Metadata Search</h1>
+    <input type="text" id="searchInput" placeholder="Type anything and press Enter..." />
+    <button id="searchButton">Search</button>
+    <div id="results"></div>
+  </div>
+
+  <!-- Popup viewer -->
+  <div id="popup" class="popup hidden">
+    <div class="popup-content">
+      <span class="close" onclick="closePopup()">&times;</span>
+      <div id="popupDetails"></div>
+    </div>
+  </div>
+
+  <!-- XLSX library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <!-- Our modular scripts -->
+  <script src="loadData.js"></script>
+  <script src="searchEngine.js"></script>
+  <script src="resultsRenderer.js"></script>
+  <script src="popupRenderer.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
