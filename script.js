@@ -13,9 +13,9 @@ const popupDetails = document.getElementById("popupDetails");
 
 let networkData = [];
 let nodeMetadata = {};
-let relationMetadata = {};
 let pathwayMetadata = {};
 let interactionMetadata = {};
+let allRelationToClusterMap = {};
 
 async function fetchExcel(url, sheetName = null) {
   const res = await fetch(url);
@@ -44,7 +44,14 @@ async function loadAllData() {
 
   networkData = network;
 
-  // Merge node metadata by Node ID
+  // Index cluster IDs
+  network.forEach(r => {
+    if (r.Relation) {
+      allRelationToClusterMap[r.Relation] = r["Cluster ID"] || "-";
+    }
+  });
+
+  // Merge node metadata
   [kegg, reactome1, reactome2, reactome3].flat().forEach(row => {
     const key = row["Node ID"] || row["Node id for mapping"];
     if (key) {
@@ -53,7 +60,7 @@ async function loadAllData() {
     }
   });
 
-  // Pathway
+  // Pathways
   keggPath.forEach(r => pathwayMetadata[r["KEGG_ID"]] = r);
   reactomePath.forEach(r => pathwayMetadata[r["Unique_Reactome_Pathway_ID"]] = r);
 
@@ -68,15 +75,66 @@ function search() {
   if (!q) return;
 
   resultsDiv.innerHTML = "";
-  const matchedNodeIDs = Object.entries(nodeMetadata)
-    .filter(([_, meta]) => Object.values(meta).some(v => String(v).toLowerCase().includes(q)))
-    .map(([id]) => id);
+  let matchedNodeIDs = new Set();
 
-  const matches = networkData.filter(row =>
-    matchedNodeIDs.includes(row.Source) || matchedNodeIDs.includes(row.Target)
-  );
+  // Match in node metadata
+  for (const [nodeID, meta] of Object.entries(nodeMetadata)) {
+    for (const val of Object.values(meta)) {
+      if (String(val).toLowerCase().includes(q)) {
+        matchedNodeIDs.add(nodeID);
+        break;
+      }
+    }
+  }
 
-  if (matches.length === 0) {
+  // Match in network directly by raw ID/text
+  const results = [];
+  for (const row of networkData) {
+    const source = row.Source;
+    const target = row.Target;
+    const relation = row.Relation;
+    const pathway = row.Pathway || "";
+    const interaction = row.Interaction || "";
+    const cluster = allRelationToClusterMap[relation] || "-";
+
+    const matchFound = (
+      matchedNodeIDs.has(source) ||
+      matchedNodeIDs.has(target) ||
+      String(relation).toLowerCase().includes(q) ||
+      String(source).toLowerCase().includes(q) ||
+      String(target).toLowerCase().includes(q) ||
+      String(interaction).toLowerCase().includes(q) ||
+      String(pathway).toLowerCase().includes(q)
+    );
+
+    if (matchFound) {
+      results.push({
+        cluster,
+        relation,
+        source,
+        target,
+        interaction,
+        pathway,
+        reason: buildReason(q, row, matchedNodeIDs)
+      });
+    }
+  }
+
+  renderResults(results);
+}
+
+function buildReason(q, row, matchedSet) {
+  const hits = [];
+  if (matchedSet.has(row.Source)) hits.push(`Matched Source Node: ${row.Source}`);
+  if (matchedSet.has(row.Target)) hits.push(`Matched Target Node: ${row.Target}`);
+  if (String(row.Relation).toLowerCase().includes(q)) hits.push(`Matched Relation ID`);
+  if (String(row.Interaction).toLowerCase().includes(q)) hits.push(`Matched Interaction`);
+  if (String(row.Pathway).toLowerCase().includes(q)) hits.push(`Matched Pathway`);
+  return hits.join("; ");
+}
+
+function renderResults(rows) {
+  if (rows.length === 0) {
     resultsDiv.innerHTML = "<p>No matches found.</p>";
     return;
   }
@@ -89,19 +147,17 @@ function search() {
     header.appendChild(th);
   });
 
-  matches.forEach(row => {
+  rows.forEach(row => {
     const tr = table.insertRow();
-    [row["Cluster ID"], row.Relation, row.Source, row.Target, row.Interaction, row.Pathway].forEach((val, i) => {
+    [row.cluster, row.relation, row.source, row.target, row.interaction, row.pathway].forEach(val => {
       const td = tr.insertCell();
-      td.innerHTML = `<a href='#' onclick='showDetails(${JSON.stringify(JSON.stringify(row))})'>${val}</a>`;
+      td.innerHTML = `<a href='#' onclick='showDetails(${JSON.stringify(JSON.stringify(row))})'>${val || "-"}</a>`;
     });
 
     const reasonRow = table.insertRow();
     const reasonCell = reasonRow.insertCell();
     reasonCell.colSpan = 6;
-    reasonCell.innerHTML = `<div class='match-reason'>Matched node metadata for ID(s): ${
-      [row.Source, row.Target].filter(id => matchedNodeIDs.includes(id)).join(", ")
-    }</div>`;
+    reasonCell.innerHTML = `<div class='match-reason'>🔍 ${row.reason}</div>`;
   });
 
   resultsDiv.appendChild(table);
@@ -109,21 +165,21 @@ function search() {
 
 function showDetails(rawStr) {
   const row = JSON.parse(rawStr);
-  const sourceMeta = nodeMetadata[row.Source] || {};
-  const targetMeta = nodeMetadata[row.Target] || {};
-  const pathwayMeta = pathwayMetadata[row.Pathway] || {};
-  const interactionID = extractInteractionID(row.Interaction);
-  const interactionMeta = interactionMetadata[interactionID] || {};
+  const sourceMeta = nodeMetadata[row.source] || {};
+  const targetMeta = nodeMetadata[row.target] || {};
+  const pathwayMeta = pathwayMetadata[row.pathway] || {};
+  const interactionID = extractInteractionID(row.interaction);
+  const interactionMeta = interactionID ? (interactionMetadata[interactionID] || {}) : {};
 
   popupDetails.innerHTML = `
-    <h2>🧬 Relation ${row.Relation}</h2>
-    <p><strong>Cluster:</strong> ${row["Cluster ID"]}</p>
-    <p><strong>Interaction:</strong><br/>${row.Interaction.replaceAll("\\n", "<br/>")}</p>
-    <p><strong>Pathway:</strong> ${row.Pathway} — ${pathwayMeta.Pathway_Name || ""}</p>
+    <h2>🧩 Relation: ${row.relation}</h2>
+    <p><strong>Cluster:</strong> ${row.cluster}</p>
+    <p><strong>Interaction:</strong><br/>${row.interaction.replaceAll("\\n", "<br/>")}</p>
+    <p><strong>Pathway:</strong> ${row.pathway} — ${pathwayMeta.Pathway_Name || "N/A"}</p>
     <hr/>
-    <h3>🔹 Source: ${row.Source}</h3>
+    <h3>🔹 Source Node: ${row.source}</h3>
     <pre>${JSON.stringify(sourceMeta, null, 2)}</pre>
-    <h3>🔹 Target: ${row.Target}</h3>
+    <h3>🔹 Target Node: ${row.target}</h3>
     <pre>${JSON.stringify(targetMeta, null, 2)}</pre>
     ${interactionID ? `<h3>🔹 Interaction ID: ${interactionID}</h3><pre>${JSON.stringify(interactionMeta, null, 2)}</pre>` : ""}
   `;
@@ -139,5 +195,5 @@ function closePopup() {
   popup.classList.add("hidden");
 }
 
-// Auto-load everything
+// Load everything at start
 loadAllData();
